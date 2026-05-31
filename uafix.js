@@ -10,6 +10,7 @@
     // ─── CONFIG ────────────────────────────────────────────────────────────────
     var PLUGIN_NAME  = 'uafix';
     var DEFAULT_HOST = 'https://uafix.net';
+    var DEFAULT_PROXY = 'https://corsproxy.io/?';
 
     // ─── UTILS ─────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,8 @@
     }
 
     function getProxy() {
-        return Lampa.Storage.get('uafix_proxy', '') || '';
+    return Lampa.Storage.get('uafix_proxy', DEFAULT_PROXY) || DEFAULT_PROXY;
+}
     }
 
     function withProxy(url) {
