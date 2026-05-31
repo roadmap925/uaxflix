@@ -1,5 +1,5 @@
 /**
- * UAfix — Lampa plugin for uafix.net  v0.2
+ * UAfix — Lampa plugin for uafix.net  v0.3
  * Install: add this URL in Lampa → Extensions
  *
  * Debug log: open Lampa → Settings → Console and filter by [UAfix]
@@ -10,9 +10,6 @@
     // ─── CONFIG ────────────────────────────────────────────────────────────────
     var PLUGIN_NAME  = 'uafix';
     var DEFAULT_HOST = 'https://uafix.net';
-
-    // URL paths that identify content pages on uafix.net
-    var CONTENT_PATHS = ['/films/', '/serials/', '/cartoons/', '/anime/', '/documentary/', '/shows/'];
 
     // ─── UTILS ─────────────────────────────────────────────────────────────────
 
@@ -42,11 +39,26 @@
         return undefined;
     }
 
+    // Non-content page patterns to exclude (search, tags, pages, system paths)
+    var SKIP_PATH_RE = /\/(search|tag[s]?|categor|page\/\d|login|register|admin|feed|wp-|do=search|index\.php)/i;
+
     function isContentUrl(url) {
-        for (var i = 0; i < CONTENT_PATHS.length; i++) {
-            if (url.indexOf(CONTENT_PATHS[i]) !== -1) return true;
-        }
-        return false;
+        if (!url) return false;
+
+        // Must belong to the configured domain
+        var domain = getDomain().replace(/^https?:\/\//, '').replace(/^www\./, '');
+        var m = url.match(/^(?:https?:\/\/)?(?:www\.)?([^/?#]+)(\/[^?#]*)/);
+        if (!m) return false;
+
+        var host = m[1].replace(/^www\./, '');
+        var path = m[2];
+
+        // Reject system/navigation URLs
+        if (SKIP_PATH_RE.test(path)) return false;
+        // Must have at least one meaningful path segment (slug)
+        if (!path || path === '/' || path.split('/').filter(Boolean).length < 1) return false;
+        // Must be from the right domain
+        return host === domain;
     }
 
     // ─── NETWORK ───────────────────────────────────────────────────────────────
@@ -620,7 +632,7 @@
 
             // Lampa.Scroll — use the same options as the online component
             scroll = new Lampa.Scroll({ mask: true, over: true });
-            scroll.body().addClass('uafix-list');
+            try { scroll.body().addClass('uafix-list'); } catch (e) {}
 
             $(self.el).append(scroll.render());
 
@@ -632,9 +644,10 @@
                 }
 
                 // Required: update scroll position on focus
-                el.on('hover:focus', function (e) {
-                    lastFocus = e.target;
-                    scroll.update($(e.target), true);
+                // Use 'this' (the focused element), not e.target (which is the native event target)
+                el.on('hover:focus', function () {
+                    lastFocus = this;
+                    scroll.update($(this), true);
                 });
 
                 // Primary: TV remote Enter / Secondary: mouse click
@@ -658,27 +671,41 @@
 
         // ── Playback ──────────────────────────────────────────────────
 
+        function launchPlayer(url, title) {
+            log('launchPlayer:', url, title);
+            try {
+                if (typeof Lampa.Player !== 'undefined' && typeof Lampa.Player.play === 'function') {
+                    Lampa.Player.play({ url: url, title: title });
+                } else {
+                    Lampa.Activity.push({ component: 'player', url: url, title: title });
+                }
+            } catch (e) {
+                log('Player.play failed, fallback to Activity:', e);
+                try { Lampa.Activity.push({ component: 'player', url: url, title: title }); } catch (e2) {}
+            }
+        }
+
         function playStream(streams, title) {
             var keys = Object.keys(streams);
             if (!keys.length) { showEmpty(Lampa.Lang.translate('uafix_no_streams')); return; }
-            if (keys.length === 1) { Lampa.Player.play({ url: streams[keys[0]], title: title }); return; }
+            if (keys.length === 1) { launchPlayer(streams[keys[0]], title); return; }
 
             var pref = Lampa.Storage.get('uafix_quality', 'auto');
             if (pref !== 'auto') {
                 var prefKey = safeFind(keys, function (k) { return k.indexOf(pref) !== -1; });
-                if (prefKey) { Lampa.Player.play({ url: streams[prefKey], title: title }); return; }
+                if (prefKey) { launchPlayer(streams[prefKey], title); return; }
             }
 
             // Auto: best quality
             var order = ['2160p', '1080p', '720p', '480p', '360p', 'HLS', 'Auto'];
             var best = safeFind(order, function (q) { return !!streams[q]; });
-            if (best) { Lampa.Player.play({ url: streams[best], title: title }); return; }
+            if (best) { launchPlayer(streams[best], title); return; }
 
             // Show picker
             Lampa.Select.show({
                 title:    Lampa.Lang.translate('uafix_select_q'),
                 items:    keys.map(function (q) { return { title: q, url: streams[q] }; }),
-                onSelect: function (itm) { Lampa.Player.play({ url: itm.url, title: title }); },
+                onSelect: function (itm) { launchPlayer(itm.url, title); },
                 onBack:   function () { Lampa.Controller.toggle('content'); }
             });
         }
@@ -790,6 +817,7 @@
                 }
 
                 log('Search HTML length:', html.length);
+                log('Search HTML snippet:', html.slice(0, 500));
                 html = stripAds(html);
 
                 var results = parseSearchResults(html, domain);
@@ -806,6 +834,17 @@
             showLoader();
             var titleMain = movie.title || movie.name || '';
             var titleOrig = movie.original_title || movie.original_name || '';
+
+            // Debug: print movie object so it's visible in Lampa console
+            log('Movie:', JSON.stringify({
+                title:          movie.title,
+                name:           movie.name,
+                original_title: movie.original_title,
+                original_name:  movie.original_name,
+                media_type:     movie.media_type,
+                release_date:   movie.release_date,
+                first_air_date: movie.first_air_date
+            }));
 
             searchWith(titleMain, function () {
                 if (titleOrig && titleOrig.toLowerCase() !== titleMain.toLowerCase()) {
@@ -859,9 +898,11 @@
     Lampa.Listener.follow('full', function (e) {
         if (e.type !== 'complite') return;
 
-        // Extract movie from multiple possible locations across Lampa versions
-        var movie = (e.data && e.data.movie)
+        // Extract movie — try every known location across Lampa versions
+        var movie = (e.object && e.object.activity && e.object.activity.movie)
                  || (e.object && e.object.movie)
+                 || (e.data && e.data.movie)
+                 || (e.object && e.object.card)
                  || {};
 
         if (!movie || (!movie.title && !movie.name)) {
@@ -981,6 +1022,6 @@
     // Single init path — only via app:ready to avoid double registration
     Lampa.Listener.follow('app:ready', setupSettings);
 
-    log('Plugin loaded v0.2 ✓');
+    log('Plugin loaded v0.3 ✓');
 
 })();
