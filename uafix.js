@@ -805,7 +805,7 @@
 
         function searchWith(query, onEmpty) {
             var domain = getDomain();
-            var url = domain + '/?do=search&subaction=search&story=' + encodeURIComponent(query);
+            var url = domain + '/search.html?do=search&subaction=search&story=' + encodeURIComponent(query);
             log('Searching for:', query, '→', url);
 
             request(url, function (err, html) {
