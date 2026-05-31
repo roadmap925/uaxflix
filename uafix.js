@@ -149,13 +149,20 @@
         if (controller) opts.signal = controller.signal;
 
         fetch(finalUrl, opts)
-            .then(function (r) {
-                clearTimeout(timer);
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.text();
-            })
-            .then(function (t) { settle(null, t); })
-            .catch(function (e) { settle(e, null); });
+    .then(function (r) {
+        clearTimeout(timer);
+        log('HTTP status:', r.status, finalUrl);
+        return r.text();
+    })
+    .then(function (t) {
+        log('Response length:', t.length, 'snippet:', t.slice(0, 200));
+        if (t.length < 100) { settle(new Error('Empty response'), null); return; }
+        settle(null, t);
+    })
+    .catch(function (e) {
+        log('fetch error:', e.message, finalUrl);
+        settle(e, null);
+    });
     }
 
     function postFetch(url, body, callback) {
