@@ -206,23 +206,6 @@
 
     // ─── PARSERS ───────────────────────────────────────────────────────────────
 
-    /**
-     * Parse uafix.net search results HTML.
-     *
-     * uafix.net card structure (search page):
-     *   <a href="/films/slug/" title="...">
-     *     <img ...>
-     *     <h3>Title / Original</h3>
-     *     <p>Description</p>
-     *   </a>
-     *
-     * OR with an inner .card wrapper:
-     *   <a href="/serials/slug/">
-     *     <div class="card">
-     *       <h3>Title</h3>
-     *     </div>
-     *   </a>
-     */
     function parseSearchResults(html, domain) {
         var results = [];
         domain = domain || getDomain();
@@ -266,7 +249,6 @@
         }
 
         // ── Strategy 1: <a href="content-url">…<h3>title</h3>…</a> ─────────
-        // This is the primary uafix.net pattern
         var anchorRe = /<a[^>]+href="([^"#?]+)"[^>]*>([\s\S]{0,600}?)<\/a>/gi;
         var am;
         while ((am = anchorRe.exec(clean)) !== null) {
@@ -274,16 +256,13 @@
             var inner = am[2];
             if (!isContentUrl(href)) continue;
 
-            // Extract title from <h3> or <h2> or title attribute
             var h3m = inner.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/i);
             if (h3m) {
                 var titleAttr = am[0].match(/\btitle="([^"]+)"/);
-                // Prefer the <h3> text; year might be in title="" attribute
                 add(href, h3m[1], titleAttr ? titleAttr[1] : '');
                 continue;
             }
 
-            // Fallback: use the title="" attribute on the <a>
             var tAttr = am[0].match(/\btitle="([^"]+)"/);
             if (tAttr && tAttr[1].length > 3) {
                 add(href, tAttr[1], '');
@@ -291,7 +270,6 @@
         }
 
         // ── Strategy 2: link scan without surrounding <a>…</a> pairs ────────
-        // Catches cases where the regex above might split across tokens
         if (results.length === 0) {
             var hrefRe = /href="([^"#?]+)"/gi;
             var hm;
@@ -301,7 +279,6 @@
                 if (hurl.charAt(0) === '/') hurl = domain + hurl;
                 if (results.some(function (r) { return r.url === hurl; })) continue;
 
-                // Grab surrounding context to extract a title
                 var ctx = clean.slice(Math.max(0, hm.index - 20), hm.index + 500);
                 var ctxH3 = ctx.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/i);
                 if (ctxH3) {
@@ -391,7 +368,6 @@
         if (plM) {
             try { parsePlaylist(JSON.parse(plM[1]), info.episodes); }
             catch (e) {
-                // Trailing comma fix
                 try {
                     parsePlaylist(JSON.parse(plM[1].replace(/,\s*([}\]])/g, '$1')), info.episodes);
                 } catch (e2) { log('playlist parse error:', e2.message); }
@@ -600,8 +576,6 @@
         self.el = document.createElement('div');
         self.el.className = 'uafix-wrap';
 
-        // ── DOM helpers ───────────────────────────────────────────────
-
         function showLoader(text) {
             text = text || Lampa.Lang.translate('uafix_searching');
             destroyScroll();
@@ -625,10 +599,6 @@
             if (scroll) { try { scroll.destroy(); } catch (e) {} scroll = null; }
         }
 
-        /**
-         * Build a scrollable list.
-         * Items are jQuery objects (required for hover:enter + scroll.update).
-         */
         function buildList(items, emptyKey) {
             if (!items || !items.length) {
                 showEmpty(Lampa.Lang.translate(emptyKey || 'uafix_not_found'));
@@ -638,7 +608,6 @@
             destroyScroll();
             self.el.innerHTML = '';
 
-            // Lampa.Scroll — use the same options as the online component
             scroll = new Lampa.Scroll({ mask: true, over: true });
             try { scroll.body().addClass('uafix-list'); } catch (e) {}
 
@@ -651,14 +620,11 @@
                     el.append($('<div class="uafix-item__sub"></div>').text(item.subtitle));
                 }
 
-                // Required: update scroll position on focus
-                // Use 'this' (the focused element), not e.target (which is the native event target)
                 el.on('hover:focus', function () {
                     lastFocus = this;
                     scroll.update($(this), true);
                 });
 
-                // Primary: TV remote Enter / Secondary: mouse click
                 el.on('hover:enter click', function () {
                     if (item.onSelect) item.onSelect(item);
                 });
@@ -676,8 +642,6 @@
                 Lampa.Controller.collectionFocus(lastFocus || false, scroll.render());
             }, 60);
         }
-
-        // ── Playback ──────────────────────────────────────────────────
 
         function launchPlayer(url, title) {
             log('launchPlayer:', url, title);
@@ -704,12 +668,10 @@
                 if (prefKey) { launchPlayer(streams[prefKey], title); return; }
             }
 
-            // Auto: best quality
             var order = ['2160p', '1080p', '720p', '480p', '360p', 'HLS', 'Auto'];
             var best = safeFind(order, function (q) { return !!streams[q]; });
             if (best) { launchPlayer(streams[best], title); return; }
 
-            // Show picker
             Lampa.Select.show({
                 title:    Lampa.Lang.translate('uafix_select_q'),
                 items:    keys.map(function (q) { return { title: q, url: streams[q] }; }),
@@ -717,8 +679,6 @@
                 onBack:   function () { Lampa.Controller.toggle('content'); }
             });
         }
-
-        // ── Episode / season ──────────────────────────────────────────
 
         function showEpisodeList(eps, baseTitle, season) {
             var items = eps.map(function (ep) {
@@ -765,8 +725,6 @@
 
         function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
-        // ── Page loading ──────────────────────────────────────────────
-
         function loadPage(url, title) {
             showLoader();
             request(url, function (err, html) {
@@ -794,8 +752,6 @@
                 });
             });
         }
-
-        // ── Search ────────────────────────────────────────────────────
 
         function handleResults(results) {
             var baseTitle = movie.title || movie.name || '';
@@ -843,7 +799,6 @@
             var titleMain = movie.title || movie.name || '';
             var titleOrig = movie.original_title || movie.original_name || '';
 
-            // Debug: print movie object so it's visible in Lampa console
             log('Movie:', JSON.stringify({
                 title:          movie.title,
                 name:           movie.name,
@@ -863,15 +818,12 @@
             });
         }
 
-        // ── Lifecycle ─────────────────────────────────────────────────
-
         this.create = function () {
             startSearch();
             return self.render();
         };
 
         this.start = function () {
-            // Use 'content' — the standard Lampa controller name for activity content areas
             Lampa.Controller.add('content', {
                 toggle: function () {
                     if (scroll) {
@@ -906,7 +858,6 @@
     Lampa.Listener.follow('full', function (e) {
         if (e.type !== 'complite') return;
 
-        // Extract movie — try every known location across Lampa versions
         var movie = (e.object && e.object.activity && e.object.activity.movie)
                  || (e.object && e.object.movie)
                  || (e.data && e.data.movie)
@@ -936,38 +887,33 @@
                 });
             });
 
-            // Inject button: try several approaches for different Lampa versions
             var injected = false;
 
-            // v1: e.object has an append() method (older Lampa)
             if (!injected && e.object && typeof e.object.append === 'function') {
-                e.object.append(btn);
+                e.object.prepend(btn);
                 injected = true;
                 log('Button injected via e.object.append()');
             }
 
-            // v2: e.object.activity has append() (even older)
             if (!injected && e.object && e.object.activity && typeof e.object.activity.append === 'function') {
-                e.object.activity.append(btn);
+                e.object.activity.prepend(btn);
                 injected = true;
                 log('Button injected via e.object.activity.append()');
             }
 
-            // v3: find .full-start__buttons in the active activity DOM
             if (!injected) {
                 var btnsArea = $(document).find('.activity--active .full-start__buttons, .activity--active .full-start-new__buttons').first();
                 if (btnsArea.length) {
-                    btnsArea.append(btn);
+                    btnsArea.prepend(btn);
                     injected = true;
                     log('Button injected via DOM query');
                 }
             }
 
-            // v4: e.body contains the card HTML
             if (!injected && e.body) {
                 var bodyBtns = $(e.body).find('.full-start__buttons, .full-start-new__buttons');
                 if (bodyBtns.length) {
-                    bodyBtns.append(btn);
+                    bodyBtns.prepend(btn);
                     injected = true;
                     log('Button injected via e.body');
                 }
@@ -994,14 +940,14 @@
                 });
                 Lampa.SettingsApi.addParam({
                     component: PLUGIN_NAME,
-                    param:  { name: 'uafix_domain',  type: 'input',  default: DEFAULT_HOST },
+                    param:  { name: 'uafix_domain', type: 'input', default: DEFAULT_HOST },
                     field:  { name: Lampa.Lang.translate('uafix_set_domain'), description: DEFAULT_HOST },
                     onChange: function (v) { Lampa.Storage.set('uafix_domain', v); }
                 });
                 Lampa.SettingsApi.addParam({
                     component: PLUGIN_NAME,
-                    param:  { name: 'uafix_proxy',   type: 'input',  default: '' },
-                    field:  { name: Lampa.Lang.translate('uafix_set_proxy'), description: 'https://cors.proxy/?url=' },
+                    param:  { name: 'uafix_proxy', type: 'input', default: 'https://api.cors.lol/?url=' },
+                    field:  { name: Lampa.Lang.translate('uafix_set_proxy'), description: 'https://api.cors.lol/?url=' },
                     onChange: function (v) { Lampa.Storage.set('uafix_proxy', v); }
                 });
                 Lampa.SettingsApi.addParam({
@@ -1027,7 +973,6 @@
         }
     }
 
-    // Single init path — only via app:ready to avoid double registration
     Lampa.Listener.follow('app:ready', setupSettings);
 
     log('Plugin loaded v0.3 ✓');
