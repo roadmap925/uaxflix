@@ -1,8 +1,8 @@
 /**
- * UAfix — Lampa plugin for uafix.net
- * Adds a "UAfix" button to film/series cards and streams content via uafix.net
+ * UAfix — Lampa plugin for uafix.net  v0.2
+ * Install: add this URL in Lampa → Extensions
  *
- * Install: add this file's URL in Lampa → Extensions
+ * Debug log: open Lampa → Settings → Console and filter by [UAfix]
  */
 (function () {
     'use strict';
@@ -11,7 +11,10 @@
     var PLUGIN_NAME  = 'uafix';
     var DEFAULT_HOST = 'https://uafix.net';
 
-    // ─── UTILITIES ─────────────────────────────────────────────────────────────
+    // URL paths that identify content pages on uafix.net
+    var CONTENT_PATHS = ['/films/', '/serials/', '/cartoons/', '/anime/', '/documentary/', '/shows/'];
+
+    // ─── UTILS ─────────────────────────────────────────────────────────────────
 
     function log() {
         var a = Array.prototype.slice.call(arguments);
@@ -39,23 +42,35 @@
         return undefined;
     }
 
-    function escapeRe(s) {
-        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    function isContentUrl(url) {
+        for (var i = 0; i < CONTENT_PATHS.length; i++) {
+            if (url.indexOf(CONTENT_PATHS[i]) !== -1) return true;
+        }
+        return false;
     }
 
     // ─── NETWORK ───────────────────────────────────────────────────────────────
 
+    // Browser-like headers to avoid bot detection
+    var HEADERS = {
+        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'uk-UA,uk;q=0.9,ru;q=0.8,en;q=0.7',
+        'Referer':         DEFAULT_HOST + '/'
+    };
+
     /**
      * GET url → callback(err, text)
-     * Tries Lampa.Reguest first (native Android bypass), falls back to fetch().
+     * Tries Lampa.Reguest.silent first (bypasses CORS on Android), then fetch().
      */
     function request(url, callback, timeout) {
         timeout = timeout || 15000;
         var finalUrl = withProxy(url);
         log('GET', finalUrl);
 
-        var timer;
         var settled = false;
+        var timer;
+        var network;
 
         function settle(err, text) {
             if (settled) return;
@@ -64,35 +79,33 @@
             callback(err, text);
         }
 
-        // ── Attempt 1: Lampa.Reguest (bypasses CORS on Android WebView) ──
-        var network;
+        // ── Try Lampa.Reguest ──────────────────────────────────────────
         try {
             network = new Lampa.Reguest();
+
+            // Check the method exists (it's a misspelling in Lampa)
+            if (typeof network.silent !== 'function') throw new Error('no silent');
+
             timer = setTimeout(function () {
                 try { network.clear(); } catch (e) {}
-                // On timeout fall through to fetch
-                fetchGet(url, callback, timeout);
-                settled = true; // prevent double-callback
+                if (!settled) { settled = true; fetchGet(url, callback, timeout); }
             }, timeout);
 
-            network.silent(finalUrl, function (text) {
-                settle(null, text);
-            }, function () {
-                // Lampa.Reguest failed → try fetch
-                clearTimeout(timer);
-                if (!settled) {
-                    settled = true;
-                    fetchGet(url, callback, timeout);
-                }
-            }, false, { dataType: 'text' });
-
+            network.silent(finalUrl,
+                function (text) { settle(null, text || ''); },
+                function () {
+                    clearTimeout(timer);
+                    if (!settled) { settled = true; fetchGet(url, callback, timeout); }
+                },
+                false,
+                { dataType: 'text' }
+            );
             return;
         } catch (e) {
             clearTimeout(timer);
-            log('Lampa.Reguest unavailable, using fetch');
+            log('Lampa.Reguest unavailable, using fetch:', e.message);
         }
 
-        // ── Attempt 2: fetch ──
         fetchGet(url, callback, timeout);
     }
 
@@ -116,26 +129,31 @@
             if (window.AbortController) controller = new AbortController();
             timer = setTimeout(function () {
                 if (controller) try { controller.abort(); } catch (e) {}
-                settle(new Error('Timeout'), null);
+                settle(new Error('Timeout after ' + timeout + 'ms'), null);
             }, timeout);
         } catch (e) {}
 
-        var opts = { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } };
+        var opts = { method: 'GET', headers: HEADERS };
         if (controller) opts.signal = controller.signal;
 
         fetch(finalUrl, opts)
-            .then(function (r) { clearTimeout(timer); return r.text(); })
+            .then(function (r) {
+                clearTimeout(timer);
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.text();
+            })
             .then(function (t) { settle(null, t); })
             .catch(function (e) { settle(e, null); });
     }
 
-    function postFetch(url, body, callback, timeout) {
-        timeout = timeout || 15000;
+    function postFetch(url, body, callback) {
         log('POST', withProxy(url));
-
         fetch(withProxy(url), {
             method:  'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+            headers: (function (h) { h['Content-Type'] = 'application/x-www-form-urlencoded'; return h; })(
+                        { 'User-Agent': HEADERS['User-Agent'], 'Accept': HEADERS['Accept'],
+                          'Accept-Language': HEADERS['Accept-Language'], 'Referer': HEADERS['Referer'] }
+                     ),
             body:    body
         })
             .then(function (r) { return r.text(); })
@@ -168,142 +186,122 @@
 
     // ─── PARSERS ───────────────────────────────────────────────────────────────
 
+    /**
+     * Parse uafix.net search results HTML.
+     *
+     * uafix.net card structure (search page):
+     *   <a href="/films/slug/" title="...">
+     *     <img ...>
+     *     <h3>Title / Original</h3>
+     *     <p>Description</p>
+     *   </a>
+     *
+     * OR with an inner .card wrapper:
+     *   <a href="/serials/slug/">
+     *     <div class="card">
+     *       <h3>Title</h3>
+     *     </div>
+     *   </a>
+     */
     function parseSearchResults(html, domain) {
         var results = [];
+        domain = domain || getDomain();
 
-        function add(url, rawTitle, rawYear) {
-            if (!url || !rawTitle) return;
-            if (url.charAt(0) === '/') url = domain + url;
-            if (/do=search|\/categor|\/tag|\.xml|\/page\//i.test(url)) return;
-            // Only accept URLs that look like article/film pages (at least one path segment after host)
-            var path = url.replace(/^https?:\/\/[^/]+/, '');
-            if (!path || path === '/' || path.split('/').filter(Boolean).length < 1) return;
-            if (results.some(function (r) { return r.url === url; })) return;
+        // Strip script/style to avoid false positives in inline JS
+        var clean = html
+            .replace(/<script[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[\s\S]*?<\/style>/gi, '');
 
-            var year = (rawYear || '').toString();
-            var yM = year.match(/\b(19|20)\d{2}\b/);
-            year = yM ? yM[0] : '';
+        function add(href, rawTitle, yearHint) {
+            if (!href || !rawTitle) return;
 
-            var title = rawTitle.replace(/\(\d{4}\)/g, '').replace(/\s+/g, ' ').trim();
+            // Resolve relative URLs
+            if (href.charAt(0) === '/') href = domain + href;
+
+            // Must look like a content page
+            if (!isContentUrl(href)) return;
+
+            // Skip duplicates
+            if (results.some(function (r) { return r.url === href; })) return;
+
+            // Clean up title: strip HTML tags, collapse whitespace
+            var title = rawTitle
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/&amp;/gi, '&')
+                .replace(/&lt;/gi, '<')
+                .replace(/&gt;/gi, '>')
+                .replace(/\(\d{4}\)/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
             if (title.length < 2) return;
-            results.push({ url: url, title: title, year: year });
+
+            // Year: try from title hint, then URL, then yearHint param
+            var year = '';
+            var ym = (yearHint || title + ' ' + href).match(/\b(19|20)\d{2}\b/);
+            if (ym) year = ym[0];
+
+            results.push({ url: href, title: title, year: year });
         }
 
-        // Strategy 1: article / DLE short-story blocks
-        var blockTokens = html.split(/<(?:article|div)[^>]+class="[^"]*(?:short[_-]?news|shortstory|news[_-]?item|search[_-]?result|mov(?:ie)?[_-]?item|dle-content)[^"]*"[^>]*>/i);
-        for (var bi = 1; bi < blockTokens.length; bi++) {
-            var block = blockTokens[bi].split(/<\/(?:article|div)>/)[0];
-            var linkM = /<a[^>]+href="([^"]+)"[^>]*>([^<]{2,})<\/a>/i.exec(block);
-            if (linkM) {
-                var ymatch = block.match(/\b(19|20)\d{2}\b/);
-                add(linkM[1], linkM[2], ymatch ? ymatch[0] : '');
+        // ── Strategy 1: <a href="content-url">…<h3>title</h3>…</a> ─────────
+        // This is the primary uafix.net pattern
+        var anchorRe = /<a[^>]+href="([^"#?]+)"[^>]*>([\s\S]{0,600}?)<\/a>/gi;
+        var am;
+        while ((am = anchorRe.exec(clean)) !== null) {
+            var href = am[1];
+            var inner = am[2];
+            if (!isContentUrl(href)) continue;
+
+            // Extract title from <h3> or <h2> or title attribute
+            var h3m = inner.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/i);
+            if (h3m) {
+                var titleAttr = am[0].match(/\btitle="([^"]+)"/);
+                // Prefer the <h3> text; year might be in title="" attribute
+                add(href, h3m[1], titleAttr ? titleAttr[1] : '');
+                continue;
+            }
+
+            // Fallback: use the title="" attribute on the <a>
+            var tAttr = am[0].match(/\btitle="([^"]+)"/);
+            if (tAttr && tAttr[1].length > 3) {
+                add(href, tAttr[1], '');
             }
         }
 
-        // Strategy 2: heading-linked titles (h1/h2/h3 inside article)
-        var headRe = /<h[123][^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([^<]{2,})<\/a>[\s\S]*?<\/h[123]>/gi;
-        var hm;
-        while ((hm = headRe.exec(html)) !== null) {
-            var ymH = html.slice(hm.index, hm.index + 300).match(/\b(19|20)\d{2}\b/);
-            add(hm[1], hm[2], ymH ? ymH[0] : '');
-        }
-
-        // Strategy 3: domain-anchored link scan (fallback)
+        // ── Strategy 2: link scan without surrounding <a>…</a> pairs ────────
+        // Catches cases where the regex above might split across tokens
         if (results.length === 0) {
-            var domEsc = escapeRe(domain.replace(/^https?:\/\//, ''));
-            var linkRe = new RegExp(
-                '<a[^>]+href="(https?://' + domEsc + '/[^"?#]{3,})"[^>]*>([^<]{3,})</a>',
-                'gi'
-            );
-            var lm;
-            while ((lm = linkRe.exec(html)) !== null) {
-                var ymL = lm[1].match(/\b(19|20)\d{2}\b/);
-                add(lm[1], lm[2], ymL ? ymL[0] : '');
-            }
-        }
+            var hrefRe = /href="([^"#?]+)"/gi;
+            var hm;
+            while ((hm = hrefRe.exec(clean)) !== null) {
+                var hurl = hm[1];
+                if (!isContentUrl(hurl)) continue;
+                if (hurl.charAt(0) === '/') hurl = domain + hurl;
+                if (results.some(function (r) { return r.url === hurl; })) continue;
 
-        log('parseSearchResults → ' + results.length + ' results');
-        return results;
-    }
-
-    function guessQuality(url) {
-        if (/2160|4k/i.test(url)) return '2160p';
-        if (/1080/.test(url))     return '1080p';
-        if (/720/.test(url))      return '720p';
-        if (/480/.test(url))      return '480p';
-        if (/360/.test(url))      return '360p';
-        if (/\.m3u8/.test(url))   return 'HLS';
-        return 'Auto';
-    }
-
-    function parseMoviePage(html) {
-        var info = { title: '', iframe: '', streams: {}, episodes: [] };
-
-        var tM = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-        if (tM) info.title = tM[1].trim();
-
-        // ── Strategy 1: JS source variables ─────────────────────────────
-        [
-            /(?:file|src|source|url)\s*:\s*['"]([^'"]+\.(?:mp4|m3u8|mkv)[^'"]{0,200})['"]/gi,
-            /"(?:file|src|source|url)"\s*:\s*"([^"]+\.(?:mp4|m3u8)[^"]{0,200})"/gi,
-            /var\s+\w+\s*=\s*['"]([^'"]+\.(?:mp4|m3u8)[^'"]{0,200})['"]/gi
-        ].forEach(function (re) {
-            var m;
-            while ((m = re.exec(html)) !== null) {
-                var u = normaliseUrl(m[1]);
-                if (u && !info.streams[guessQuality(u)]) info.streams[guessQuality(u)] = u;
-            }
-        });
-
-        // ── Strategy 2: sources[] block ──────────────────────────────────
-        var srcBlock = html.match(/sources\s*:\s*\[([\s\S]{0,3000}?)\]/i);
-        if (srcBlock) {
-            var p1 = /"(?:file|src)"\s*:\s*"([^"]+)"[^}]{0,200}"label"\s*:\s*"([^"]+)"/g;
-            var p2 = /"label"\s*:\s*"([^"]+)"[^}]{0,200}"(?:file|src)"\s*:\s*"([^"]+)"/g;
-            var pm;
-            while ((pm = p1.exec(srcBlock[1])) !== null) info.streams[pm[2]] = normaliseUrl(pm[1]);
-            while ((pm = p2.exec(srcBlock[1])) !== null) info.streams[pm[1]] = normaliseUrl(pm[2]);
-        }
-
-        // ── Strategy 3: iframe embed ─────────────────────────────────────
-        var embedHosts = 'collaps\\.to|cdn\\.collaps|delivembd\\.ws|kodik\\.info|kodik\\.cc|anifox|ashdi\\.vip|videocdn|cdnmovies|cdnvideohub|moonwalk|iframe\\.video|voidboost';
-        var iframeRe = new RegExp(
-            '<iframe[^>]+(?:src|data-src)=[\'"]' +
-            '((?:https?:)?//(?:' + embedHosts + ')[^\'\"]{0,300})[\'"]',
-            'i'
-        );
-        var im = iframeRe.exec(html);
-        if (!im) {
-            im = /<iframe[^>]+(?:src|data-src)=['"]([^'"]+(?:\/embed\/|\/player\/|\/video\/|\/v\/)[^'"]{0,300})['"]/i.exec(html);
-        }
-        if (im) {
-            info.iframe = normaliseUrl(im[1]);
-            log('Found iframe:', info.iframe);
-        }
-
-        // ── Strategy 4: playlist JS variable (TV series) ─────────────────
-        var plM = html.match(/(?:var\s+)?playlist\s*=\s*(\[[\s\S]{0,30000}?\]);/i);
-        if (plM) {
-            // Attempt 1: raw JSON parse
-            try {
-                var pl = JSON.parse(plM[1]);
-                if (Array.isArray(pl)) parsePlaylist(pl, info.episodes);
-            } catch (e) {
-                // Attempt 2: light single→double quote fix (avoids breaking URLs)
-                try {
-                    var raw2 = plM[1].replace(/,\s*([}\]])/g, '$1');
-                    var pl2  = JSON.parse(raw2);
-                    if (Array.isArray(pl2)) parsePlaylist(pl2, info.episodes);
-                } catch (e2) {
-                    log('playlist parse error:', e2.message);
+                // Grab surrounding context to extract a title
+                var ctx = clean.slice(Math.max(0, hm.index - 20), hm.index + 500);
+                var ctxH3 = ctx.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/i);
+                if (ctxH3) {
+                    add(hurl, ctxH3[1], '');
                 }
             }
         }
 
-        log('parseMoviePage: streams=' + Object.keys(info.streams).length +
-            ' iframe=' + (info.iframe ? '✓' : '✗') +
-            ' episodes=' + info.episodes.length);
-        return info;
+        log('parseSearchResults →', results.length, 'results:', results.slice(0, 3));
+        return results;
+    }
+
+    function guessQuality(url) {
+        if (/2160|4[kK]/.test(url)) return '2160p';
+        if (/1080/.test(url))       return '1080p';
+        if (/720/.test(url))        return '720p';
+        if (/480/.test(url))        return '480p';
+        if (/360/.test(url))        return '360p';
+        if (/\.m3u8/.test(url))     return 'HLS';
+        return 'Auto';
     }
 
     function normaliseUrl(u) {
@@ -313,10 +311,84 @@
         return u;
     }
 
+    function parseMoviePage(html) {
+        var info = { title: '', iframe: '', streams: {}, episodes: [] };
+
+        var tM = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+        if (tM) info.title = tM[1].trim();
+
+        var clean = html
+            .replace(/<style[\s\S]*?<\/style>/gi, '')
+            .replace(/\/\*[\s\S]*?\*\//g, '');
+
+        // ── Strategy 1: JS file/source variables ─────────────────────────
+        var jsPatterns = [
+            /(?:file|src|source)\s*:\s*['"]([^'"]+\.(?:mp4|m3u8|mkv)[^'"]{0,200})['"]/gi,
+            /"(?:file|src|source)"\s*:\s*"([^"]+\.(?:mp4|m3u8)[^"]{0,200})"/gi,
+            /var\s+\w+\s*=\s*['"]([^'"]+\.(?:mp4|m3u8)[^'"]{0,200})['"]/gi
+        ];
+        jsPatterns.forEach(function (re) {
+            var m;
+            while ((m = re.exec(clean)) !== null) {
+                var u = normaliseUrl(m[1]);
+                if (u) { var q = guessQuality(u); if (!info.streams[q]) info.streams[q] = u; }
+            }
+        });
+
+        // ── Strategy 2: sources[] array ──────────────────────────────────
+        var srcBlock = clean.match(/sources\s*:\s*\[([\s\S]{0,3000}?)\]/i);
+        if (srcBlock) {
+            [
+                /"(?:file|src)"\s*:\s*"([^"]+)"[^}]{0,300}"label"\s*:\s*"([^"]+)"/g,
+                /"label"\s*:\s*"([^"]+)"[^}]{0,300}"(?:file|src)"\s*:\s*"([^"]+)"/g
+            ].forEach(function (re, idx) {
+                var pm;
+                while ((pm = re.exec(srcBlock[1])) !== null) {
+                    if (idx === 0) info.streams[pm[2]] = normaliseUrl(pm[1]);
+                    else           info.streams[pm[1]] = normaliseUrl(pm[2]);
+                }
+            });
+        }
+
+        // ── Strategy 3: iframe embed ──────────────────────────────────────
+        var embedHosts = 'collaps\\.to|cdn\\.collaps|delivembd\\.ws|kodik\\.info|kodik\\.cc|anifox|ashdi\\.vip|videocdn|cdnmovies|cdnvideohub|moonwalk|voidboost';
+        var iframeRe = new RegExp(
+            '<iframe[^>]+(?:src|data-src)=[\'"]' +
+            '((?:https?:)?//(?:' + embedHosts + ')[^\'\"]{0,300})[\'"]',
+            'i'
+        );
+        var im = iframeRe.exec(clean);
+        if (!im) {
+            im = /<iframe[^>]+(?:src|data-src)=['"]([^'"]+(?:\/embed\/|\/player\/|\/video\/|\/v\/)[^'"]{0,300})['"]/i.exec(clean);
+        }
+        if (im) {
+            info.iframe = normaliseUrl(im[1]);
+            log('Found iframe:', info.iframe);
+        }
+
+        // ── Strategy 4: playlist variable (TV series) ─────────────────────
+        var plM = clean.match(/(?:var\s+)?playlist\s*=\s*(\[[\s\S]{0,30000}?\]);/i);
+        if (plM) {
+            try { parsePlaylist(JSON.parse(plM[1]), info.episodes); }
+            catch (e) {
+                // Trailing comma fix
+                try {
+                    parsePlaylist(JSON.parse(plM[1].replace(/,\s*([}\]])/g, '$1')), info.episodes);
+                } catch (e2) { log('playlist parse error:', e2.message); }
+            }
+        }
+
+        log('parseMoviePage: streams=' + Object.keys(info.streams).length +
+            ' iframe=' + (info.iframe ? '✓' : '✗') +
+            ' episodes=' + info.episodes.length);
+        return info;
+    }
+
     function parsePlaylist(pl, out) {
+        if (!Array.isArray(pl)) return;
         pl.forEach(function (ep, i) {
             out.push({
-                season:  parseInt(ep.season, 10)  || 1,
+                season:  parseInt(ep.season,  10) || 1,
                 episode: parseInt(ep.episode, 10) || (i + 1),
                 title:   ep.title || ep.name  || '',
                 url:     normaliseUrl(ep.file || ep.url || ep.hls || '')
@@ -331,8 +403,7 @@
 
         var idM = embedUrl.match(/\/(?:v|video|embed|e)\/([a-zA-Z0-9]+)/);
         if (idM) {
-            var apiUrl = 'https://api.collaps.to/api/source/' + idM[1];
-            fetchGet(apiUrl, function (err, text) {
+            fetchGet('https://api.collaps.to/api/source/' + idM[1], function (err, text) {
                 var streams = {};
                 if (!err && text) {
                     try {
@@ -361,25 +432,26 @@
             scrapeVideoUrls(html, streams);
             if (Object.keys(streams).length) { callback(null, streams); return; }
 
-            // Kodik API /gvi
             var tokenM = html.match(/['"]?token['"]?\s*[:=]\s*['"]([^'"]{6,})['"]/);
             var typeM  = html.match(/\/(?:seria|film|video|anime)\/(\d+)\//);
             if (!tokenM || !typeM) { callback(null, null); return; }
 
-            var body = 'id=' + typeM[1] + '&type=seria&hash=&season=1&episode=1&token=' + tokenM[1];
-            postFetch('https://kodik.info/gvi', body, function (perr, text) {
-                if (perr || !text) { callback(null, null); return; }
-                try {
-                    var json = JSON.parse(text);
-                    var links = json.links || {};
-                    Object.keys(links).forEach(function (q) {
-                        var link = Array.isArray(links[q]) ? links[q][0] : links[q];
-                        var src = normaliseUrl(link.src || link.url || link || '');
-                        if (src) streams[q + 'p'] = src;
-                    });
-                } catch (e) {}
-                callback(null, Object.keys(streams).length ? streams : null);
-            });
+            postFetch('https://kodik.info/gvi',
+                'id=' + typeM[1] + '&type=seria&hash=&season=1&episode=1&token=' + tokenM[1],
+                function (perr, text) {
+                    if (perr || !text) { callback(null, null); return; }
+                    try {
+                        var json = JSON.parse(text);
+                        var links = json.links || {};
+                        Object.keys(links).forEach(function (q) {
+                            var link = Array.isArray(links[q]) ? links[q][0] : links[q];
+                            var src  = normaliseUrl(link.src || link.url || link || '');
+                            if (src) streams[q + 'p'] = src;
+                        });
+                    } catch (e) {}
+                    callback(null, Object.keys(streams).length ? streams : null);
+                }
+            );
         });
     }
 
@@ -397,13 +469,10 @@
         var m;
         while ((m = re.exec(html)) !== null) {
             var u = normaliseUrl(m[1]);
-            if (u && !out[guessQuality(u)]) out[guessQuality(u)] = u;
+            if (u) { var q = guessQuality(u); if (!out[q]) out[q] = u; }
         }
     }
 
-    /**
-     * Full extraction pipeline: parse page → decode embed → callback(err, streams, info)
-     */
     function extractStreams(html, pageUrl, callback) {
         var info = parseMoviePage(html);
 
@@ -414,9 +483,9 @@
         if (info.iframe) {
             var iurl = info.iframe;
             var decode;
-            if (/collaps|delivembd/i.test(iurl)) decode = decodeCollaps;
-            else if (/kodik/i.test(iurl))        decode = decodeKodik;
-            else                                  decode = scrapeForStreams;
+            if (/collaps|delivembd/i.test(iurl))  decode = decodeCollaps;
+            else if (/kodik/i.test(iurl))          decode = decodeKodik;
+            else                                    decode = scrapeForStreams;
 
             decode(iurl, function (err, iStreams) {
                 var merged = {};
@@ -448,14 +517,14 @@
             var rt = r.title.toLowerCase().trim();
             var score = 0;
             names.forEach(function (n) {
-                if (rt === n)                                   score += 20;
-                else if (rt.indexOf(n) !== -1 || n.indexOf(rt) !== -1) score += 10;
-                else                                            score += wordOverlap(rt, n) * 2;
+                if (rt === n)                                            score += 20;
+                else if (rt.indexOf(n) !== -1 || n.indexOf(rt) !== -1)  score += 10;
+                else                                                     score += wordOverlap(rt, n) * 2;
             });
             if (year && r.year) {
                 var diff = Math.abs(parseInt(r.year, 10) - parseInt(year, 10));
                 if (diff === 0) score += 5;
-                else if (diff === 1) score += 2;
+                else if (diff <= 1) score += 2;
             }
             return { r: r, score: score };
         });
@@ -472,11 +541,8 @@
         uafix_searching:  { ru: 'Поиск на UAfix…',          uk: 'Пошук на UAfix…',          en: 'Searching UAfix…' },
         uafix_not_found:  { ru: 'Не найдено на UAfix',       uk: 'Не знайдено на UAfix',      en: 'Not found on UAfix' },
         uafix_error:      { ru: 'Ошибка загрузки',           uk: 'Помилка завантаження',      en: 'Load error' },
-        uafix_no_streams: { ru: 'Видеопотоки не найдены',   uk: 'Відеопотоки не знайдено',   en: 'No video streams found' },
-        uafix_select_src: { ru: 'Выберите источник',         uk: 'Оберіть джерело',           en: 'Select source' },
+        uafix_no_streams: { ru: 'Видеопотоки не найдены',    uk: 'Відеопотоки не знайдено',   en: 'No video streams found' },
         uafix_select_q:   { ru: 'Выберите качество',         uk: 'Оберіть якість',            en: 'Select quality' },
-        uafix_select_s:   { ru: 'Выберите сезон',            uk: 'Оберіть сезон',             en: 'Select season' },
-        uafix_select_ep:  { ru: 'Выберите серию',            uk: 'Оберіть серію',             en: 'Select episode' },
         uafix_season:     { ru: 'Сезон',                     uk: 'Сезон',                     en: 'Season' },
         uafix_episode:    { ru: 'Серия',                     uk: 'Серія',                     en: 'Episode' },
         uafix_hint_proxy: { ru: 'Нет ответа? Укажите CORS-прокси в настройках UAfix',
@@ -489,19 +555,18 @@
 
     // ─── CSS ───────────────────────────────────────────────────────────────────
 
-    var style = document.createElement('style');
-    style.textContent = [
-        '.uafix-wrap { display:flex; flex-direction:column; width:100%; height:100%; }',
-        '.uafix-wrap .uafix-item { padding:0.8em 1.4em; border-bottom:1px solid rgba(255,255,255,0.06); }',
-        '.uafix-wrap .uafix-item__name { font-size:1.2em; font-weight:600; }',
-        '.uafix-wrap .uafix-item__sub  { font-size:0.9em; opacity:0.6; margin-top:0.2em; }',
-        '.uafix-wrap .uafix-item.focus { background:rgba(255,255,255,0.12); }',
-        '.uafix-wrap .broadcast--empty { display:flex; flex-direction:column; align-items:center;',
-        '  justify-content:center; height:100%; gap:1em; opacity:0.7; }',
-        '.uafix-wrap .empty { display:flex; flex-direction:column; align-items:center;',
-        '  justify-content:center; height:100%; gap:1em; opacity:0.7; }'
-    ].join('\n');
-    document.head.appendChild(style);
+    (function () {
+        var style = document.createElement('style');
+        style.textContent = [
+            '.uafix-wrap { display:flex; flex-direction:column; width:100%; height:100%; }',
+            '.uafix-item { padding:0.8em 1.4em; border-bottom:1px solid rgba(255,255,255,0.07); cursor:pointer; }',
+            '.uafix-item__name { font-size:1.2em; font-weight:600; }',
+            '.uafix-item__sub  { font-size:0.9em; opacity:0.55; margin-top:0.2em; }',
+            '.broadcast--uafix { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:1em; opacity:0.7; }',
+            '.empty--uafix { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:0.6em; opacity:0.7; }'
+        ].join('\n');
+        document.head.appendChild(style);
+    }());
 
     // ─── COMPONENT ─────────────────────────────────────────────────────────────
 
@@ -510,37 +575,40 @@
         var movie  = object.movie;
         var scroll = null;
         var dead   = false;
+        var lastFocus = false;
 
         self.el = document.createElement('div');
         self.el.className = 'uafix-wrap';
 
         // ── DOM helpers ───────────────────────────────────────────────
 
-        function setContent(html) { self.el.innerHTML = html; }
-
         function showLoader(text) {
             text = text || Lampa.Lang.translate('uafix_searching');
-            setContent(
-                '<div class="broadcast--empty">' +
+            destroyScroll();
+            self.el.innerHTML =
+                '<div class="broadcast--uafix">' +
                 '<div class="broadcast__scan"><div></div><div></div><div></div></div>' +
                 '<div class="broadcast__text">' + text + '</div>' +
-                '</div>'
-            );
+                '</div>';
         }
 
         function showEmpty(text) {
-            setContent(
-                '<div class="empty">' +
+            destroyScroll();
+            self.el.innerHTML =
+                '<div class="empty--uafix">' +
                 '<div class="empty__ico"></div>' +
                 '<div class="empty__text">' + text + '</div>' +
-                '</div>'
-            );
+                '</div>';
         }
 
         function destroyScroll() {
             if (scroll) { try { scroll.destroy(); } catch (e) {} scroll = null; }
         }
 
+        /**
+         * Build a scrollable list.
+         * Items are jQuery objects (required for hover:enter + scroll.update).
+         */
         function buildList(items, emptyKey) {
             if (!items || !items.length) {
                 showEmpty(Lampa.Lang.translate(emptyKey || 'uafix_not_found'));
@@ -549,17 +617,28 @@
 
             destroyScroll();
             self.el.innerHTML = '';
-            scroll = new Lampa.Scroll({ horizontal: false, nopadding: true });
-            self.el.appendChild(scroll.render(true));
+
+            // Lampa.Scroll — use the same options as the online component
+            scroll = new Lampa.Scroll({ mask: true, over: true });
+            scroll.body().addClass('uafix-list');
+
+            $(self.el).append(scroll.render());
 
             items.forEach(function (item) {
-                var el = document.createElement('div');
-                el.className = 'uafix-item selector';
-                el.innerHTML =
-                    '<div class="uafix-item__name">' + (item.title || '') + '</div>' +
-                    (item.subtitle ? '<div class="uafix-item__sub">' + item.subtitle + '</div>' : '');
+                var el = $('<div class="uafix-item selector"></div>');
+                el.append($('<div class="uafix-item__name"></div>').text(item.title || ''));
+                if (item.subtitle) {
+                    el.append($('<div class="uafix-item__sub"></div>').text(item.subtitle));
+                }
 
-                el.addEventListener('hover:enter', function () {
+                // Required: update scroll position on focus
+                el.on('hover:focus', function (e) {
+                    lastFocus = e.target;
+                    scroll.update($(e.target), true);
+                });
+
+                // Primary: TV remote Enter / Secondary: mouse click
+                el.on('hover:enter click', function () {
                     if (item.onSelect) item.onSelect(item);
                 });
 
@@ -571,10 +650,9 @@
 
         function focusFirst() {
             setTimeout(function () {
-                if (!dead) {
-                    Lampa.Controller.collectionSet(self.el);
-                    Lampa.Controller.collectionFocus(false, self.el);
-                }
+                if (dead || !scroll) return;
+                Lampa.Controller.collectionSet(scroll.render());
+                Lampa.Controller.collectionFocus(lastFocus || false, scroll.render());
             }, 60);
         }
 
@@ -591,21 +669,21 @@
                 if (prefKey) { Lampa.Player.play({ url: streams[prefKey], title: title }); return; }
             }
 
-            // Auto: pick best available
+            // Auto: best quality
             var order = ['2160p', '1080p', '720p', '480p', '360p', 'HLS', 'Auto'];
             var best = safeFind(order, function (q) { return !!streams[q]; });
             if (best) { Lampa.Player.play({ url: streams[best], title: title }); return; }
 
-            // Fallback to quality picker
+            // Show picker
             Lampa.Select.show({
                 title:    Lampa.Lang.translate('uafix_select_q'),
                 items:    keys.map(function (q) { return { title: q, url: streams[q] }; }),
                 onSelect: function (itm) { Lampa.Player.play({ url: itm.url, title: title }); },
-                onBack:   function () { Lampa.Controller.toggle(PLUGIN_NAME); }
+                onBack:   function () { Lampa.Controller.toggle('content'); }
             });
         }
 
-        // ── Episode / season navigation ───────────────────────────────
+        // ── Episode / season ──────────────────────────────────────────
 
         function showEpisodeList(eps, baseTitle, season) {
             var items = eps.map(function (ep) {
@@ -625,8 +703,8 @@
         function showSeasonMenu(pageInfo, baseTitle) {
             var eps = pageInfo.episodes;
             if (!eps || !eps.length) {
-                if (Object.keys(pageInfo.streams).length) playStream(pageInfo.streams, baseTitle);
-                else showEmpty(Lampa.Lang.translate('uafix_not_found'));
+                if (Object.keys(pageInfo.streams).length) { playStream(pageInfo.streams, baseTitle); return; }
+                showEmpty(Lampa.Lang.translate('uafix_not_found'));
                 return;
             }
 
@@ -643,7 +721,7 @@
             var items = nums.map(function (s) {
                 return {
                     title:    Lampa.Lang.translate('uafix_season') + ' ' + s,
-                    subtitle: seasons[s].length + ' ' + Lampa.Lang.translate('uafix_episode').toLowerCase() + (seasons[s].length !== 1 ? 'й' : 'я'),
+                    subtitle: seasons[s].length + ' ' + Lampa.Lang.translate('uafix_episode').toLowerCase(),
                     onSelect: function () { showEpisodeList(seasons[s], baseTitle, s); }
                 };
             });
@@ -659,6 +737,7 @@
             request(url, function (err, html) {
                 if (dead) return;
                 if (err || !html) {
+                    log('loadPage error:', err);
                     showEmpty(Lampa.Lang.translate('uafix_error') + '. ' + Lampa.Lang.translate('uafix_hint_proxy'));
                     return;
                 }
@@ -668,7 +747,6 @@
                     if (dead) return;
 
                     var isTV = (movie.media_type === 'tv') || !!(movie.number_of_seasons);
-
                     if (isTV && pageInfo.episodes && pageInfo.episodes.length) {
                         showSeasonMenu(pageInfo, title);
                     } else if (Object.keys(streams).length) {
@@ -701,23 +779,26 @@
         function searchWith(query, onEmpty) {
             var domain = getDomain();
             var url = domain + '/?do=search&subaction=search&story=' + encodeURIComponent(query);
-            log('Search query:', query);
+            log('Searching for:', query, '→', url);
 
             request(url, function (err, html) {
                 if (dead) return;
                 if (err || !html) {
+                    log('Search error:', err);
                     showEmpty(Lampa.Lang.translate('uafix_error') + '. ' + Lampa.Lang.translate('uafix_hint_proxy'));
                     return;
                 }
 
+                log('Search HTML length:', html.length);
                 html = stripAds(html);
+
                 var results = parseSearchResults(html, domain);
                 var matched = bestMatch(results, movie);
-                log('Matched ' + matched.length + ' of ' + results.length + ' results for "' + query + '"');
+                log('Results:', results.length, '→ Matched:', matched.length, matched.slice(0, 3));
 
-                if (matched.length) handleResults(matched);
-                else if (onEmpty)    onEmpty();
-                else                 showEmpty(Lampa.Lang.translate('uafix_not_found'));
+                if (matched.length) { handleResults(matched); }
+                else if (onEmpty)    { onEmpty(); }
+                else                 { showEmpty(Lampa.Lang.translate('uafix_not_found')); }
             });
         }
 
@@ -743,17 +824,20 @@
         };
 
         this.start = function () {
-            Lampa.Controller.add(PLUGIN_NAME, {
+            // Use 'content' — the standard Lampa controller name for activity content areas
+            Lampa.Controller.add('content', {
                 toggle: function () {
-                    Lampa.Controller.collectionSet(self.el);
-                    Lampa.Controller.collectionFocus(false, self.el);
+                    if (scroll) {
+                        Lampa.Controller.collectionSet(scroll.render());
+                        Lampa.Controller.collectionFocus(lastFocus || false, scroll.render());
+                    }
                 },
                 back:  function () { Lampa.Activity.backward(); },
                 up:    function () { if (scroll) scroll.wheel(-200); },
                 down:  function () { if (scroll) scroll.wheel(200);  },
                 left:  function () { Lampa.Controller.toggle('menu'); }
             });
-            Lampa.Controller.toggle(PLUGIN_NAME);
+            Lampa.Controller.toggle('content');
         };
 
         this.pause   = function () {};
@@ -775,27 +859,75 @@
     Lampa.Listener.follow('full', function (e) {
         if (e.type !== 'complite') return;
 
+        // Extract movie from multiple possible locations across Lampa versions
+        var movie = (e.data && e.data.movie)
+                 || (e.object && e.object.movie)
+                 || {};
+
+        if (!movie || (!movie.title && !movie.name)) {
+            log('full complite: no movie data found, e.data=', e.data, 'e.object=', e.object);
+            return;
+        }
+
         try {
-            var btn = $('<div class="view--uafix selector">' +
-                '<div class="view__icon">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">' +
+            var btn = $('<div class="full-start__button selector view--uafix">' +
+                '<div class="full-start__button-icon">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22">' +
                 '<path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10' +
                 ' 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>' +
-                '</svg>' +
-                '</div>' +
-                '<div class="view__name">UAfix</div>' +
+                '</svg></div>' +
+                '<div class="full-start__button-text">UAfix</div>' +
                 '</div>');
 
-            btn.on('hover:enter', function () {
-                var actMovie = e.object.activity.movie;
+            btn.on('hover:enter click', function () {
                 Lampa.Activity.push({
                     component: PLUGIN_NAME,
-                    movie:     actMovie,
-                    title:     'UAfix — ' + (actMovie.title || actMovie.name || actMovie.original_title || '')
+                    movie:     movie,
+                    title:     'UAfix — ' + (movie.title || movie.name || movie.original_title || '')
                 });
             });
 
-            e.object.activity.append(btn);
+            // Inject button: try several approaches for different Lampa versions
+            var injected = false;
+
+            // v1: e.object has an append() method (older Lampa)
+            if (!injected && e.object && typeof e.object.append === 'function') {
+                e.object.append(btn);
+                injected = true;
+                log('Button injected via e.object.append()');
+            }
+
+            // v2: e.object.activity has append() (even older)
+            if (!injected && e.object && e.object.activity && typeof e.object.activity.append === 'function') {
+                e.object.activity.append(btn);
+                injected = true;
+                log('Button injected via e.object.activity.append()');
+            }
+
+            // v3: find .full-start__buttons in the active activity DOM
+            if (!injected) {
+                var btnsArea = $(document).find('.activity--active .full-start__buttons, .activity--active .full-start-new__buttons').first();
+                if (btnsArea.length) {
+                    btnsArea.append(btn);
+                    injected = true;
+                    log('Button injected via DOM query');
+                }
+            }
+
+            // v4: e.body contains the card HTML
+            if (!injected && e.body) {
+                var bodyBtns = $(e.body).find('.full-start__buttons, .full-start-new__buttons');
+                if (bodyBtns.length) {
+                    bodyBtns.append(btn);
+                    injected = true;
+                    log('Button injected via e.body');
+                }
+            }
+
+            if (!injected) {
+                log('WARNING: Could not inject button. e keys:', Object.keys(e));
+            }
+
         } catch (err) {
             log('Button inject error:', err);
         }
@@ -804,7 +936,6 @@
     // ─── SETTINGS ──────────────────────────────────────────────────────────────
 
     function setupSettings() {
-        // Modern API (Lampa ≥ 2023)
         if (Lampa.SettingsApi) {
             try {
                 Lampa.SettingsApi.addComponent({
@@ -831,26 +962,25 @@
                     field:  { name: Lampa.Lang.translate('uafix_set_q') },
                     onChange: function (v) { Lampa.Storage.set('uafix_quality', v); }
                 });
-                log('Settings → SettingsApi');
+                log('Settings → SettingsApi ✓');
                 return;
             } catch (e) { log('SettingsApi err:', e); }
         }
 
-        // Legacy fallback
         if (Lampa.Params) {
             try {
                 Lampa.Params.select('uafix_quality', {
                     values:  { auto: 'Авто', '1080': '1080p', '720': '720p', '480': '480p' },
                     default: 'auto'
                 });
-                log('Settings → Lampa.Params');
+                log('Settings → Lampa.Params ✓');
             } catch (e) { log('Params err:', e); }
         }
     }
 
-    if (Lampa.Listener) Lampa.Listener.follow('app:ready', setupSettings);
-    try { setupSettings(); } catch (e) {}
+    // Single init path — only via app:ready to avoid double registration
+    Lampa.Listener.follow('app:ready', setupSettings);
 
-    log('Plugin ready ✓');
+    log('Plugin loaded v0.2 ✓');
 
 })();
