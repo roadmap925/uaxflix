@@ -10,7 +10,7 @@
     // ─── CONFIG ────────────────────────────────────────────────────────────────
     var PLUGIN_NAME  = 'uafix';
     var DEFAULT_HOST = 'https://uafix.net';
-    var DEFAULT_PROXY = 'https://api.cors.lol/?url=';
+    var DEFAULT_PROXY = 'https://myproxy.example.com/?url=';
 
     // ─── UTILS ─────────────────────────────────────────────────────────────────
 
