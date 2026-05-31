@@ -10,7 +10,7 @@
     // ─── CONFIG ────────────────────────────────────────────────────────────────
     var PLUGIN_NAME  = 'uafix';
     var DEFAULT_HOST = 'https://uafix.net';
-    var DEFAULT_PROXY = 'https://cors-anywhere.herokuapp.com/';
+    var DEFAULT_PROXY = 'http://192.168.12.133:5000/?url=';
 
     // ─── UTILS ─────────────────────────────────────────────────────────────────
 
