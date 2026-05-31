@@ -26,7 +26,6 @@
 
     function getProxy() {
     return Lampa.Storage.get('uafix_proxy', DEFAULT_PROXY) || DEFAULT_PROXY;
-}
     }
 
     function withProxy(url) {
