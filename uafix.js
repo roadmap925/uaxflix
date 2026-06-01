@@ -936,7 +936,7 @@
         var name = elem.title||elem.name||''; var orig = elem.title_en||elem.original_title||elem.orig_title||'';
         elem.title = escapeHtml(name + (orig&&orig!==name?' / '+orig:''));
         elem.time = elem.time||'';
-        elem.info = info.join('<span class="online-prestige-split">●</span>');
+        elem.info = info.join('<span class="online-prestige-split">&#x25CF;</span>');
         var item = Lampa.Template.get('uaflix_plugin_folder', elem);
         if (elem.poster && (elem.source=='uaflix'||balanser=='uaflix')) {
           var folder = item.find('.online-prestige__folder');
@@ -1056,7 +1056,7 @@
           } else if (object.movie.release_date&&fully) info.push(Lampa.Utils.parseTime(object.movie.release_date).full);
           if (!serial&&object.movie.tagline&&element.info.length<30) info.push(escapeHtml(object.movie.tagline));
           if (element.info) info.push(element.info);
-          if (info.length) element.info = info.map(function(i){ return '<span>'+i+'</span>'; }).join('<span class="online-prestige-split">●</span>');
+          if (info.length) element.info = info.map(function(i){ return '<span>'+i+'</span>'; }).join('<span class="online-prestige-split">&#x25CF;</span>');
           var html = Lampa.Template.get('uaflix_plugin_full', element);
           var loader = html.find('.online-prestige__loader');
           var image = html.find('.online-prestige__img');
@@ -1117,7 +1117,7 @@
             var txt=Lampa.Lang.translate('full_episode_days_left')+': '+day;
             var html=Lampa.Template.get('uaflix_plugin_full',{
               time:Lampa.Utils.secondsToTime((episode?episode.runtime:object.movie.runtime)*60,true),
-              info:info.length?info.map(function(i){ return '<span>'+i+'</span>'; }).join('<span class="online-prestige-split">●</span>'):'',
+              info:info.length?info.map(function(i){ return '<span>'+i+'</span>'; }).join('<span class="online-prestige-split">&#x25CF;</span>'):'',
               title:escapeHtml(episode.name), quality:day>0?txt:''
             });
             var loader=html.find('.online-prestige__loader'); var image=html.find('.online-prestige__img');
@@ -1239,7 +1239,6 @@
     this.destroy=function(){ api_client.clear(); this.clearImages(); files.destroy(); scroll.destroy(); clearInterval(balanser_timer); if (source) source.destroy(); };
   }
 
-  // ─── FILMIX ───────────────────────────────────────────────────────────────
   var FILMIX_POLL_INTERVAL = 10000;
   var FILMIX_MAX_QUALITY_KEY = 'UAFLIX_FILMIX_MAX_QUALITY';
   var AUTH_KEYS = getAuthKeys();
@@ -1436,7 +1435,6 @@
     SettingsApi.addParam({ component:'uaflix_plugin', param:{ name:'uaflix_plugin_filmix_auth_reset', type:'button' }, field:{ name:Lampa.Lang.translate('uaflix_plugin_filmix_auth_reset') }, onChange:function(){ resetFilmixAuth(); } });
   }
 
-  // ─── COMMUNITY WATCHES ────────────────────────────────────────────────────
   var communityWatchesPlugin = { url: config.community_watches_url, name: config.community_watches_name, status: 1 };
   var communityWatchesAutoinstallFlag = config.storage_prefixes.cw_autoinstall_done;
   function normalizePluginUrl(url) { return (url||'').toString().trim().replace(/[?#].*$/,'').replace(/\/+$/,'').replace(/^https?:\/\//i,'').toLowerCase(); }
@@ -1463,7 +1461,6 @@
     Lampa.Storage.set(communityWatchesAutoinstallFlag, true);
   }
 
-  // ─── START PLUGIN ─────────────────────────────────────────────────────────
   function startPlugin() {
     window.uaflix_plugin = true;
     ensureCommunityWatchesPlugin();
@@ -1541,7 +1538,7 @@
 
     initSettings();
 
-    Lampa.Template.add('uaflix_plugin_css', '<style id="uaflix_plugin_style">@charset \'UTF-8\';.online-prestige{position:relative;border-radius:.3em;background-color:rgba(0,0,0,0.3);display:flex;will-change:transform}.online-prestige__body{padding:1.2em;line-height:1.3;flex-grow:1;position:relative}.online-prestige__img{position:relative;width:13em;flex-shrink:0;min-height:8.2em}.online-prestige__img>img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border-radius:.3em;opacity:0;transition:opacity .3s}.online-prestige__img--loaded>img{opacity:1}.online-prestige__folder{padding:1em;flex-shrink:0}.online-prestige__folder>svg{width:4.4em!important;height:4.4em!important}.online-prestige__viewed{position:absolute;top:1em;left:1em;background:rgba(0,0,0,0.45);border-radius:100%;padding:.25em;font-size:.76em}.online-prestige__viewed>svg{width:1.5em!important;height:1.5em!important}.online-prestige__episode-number{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em}.online-prestige__loader{position:absolute;top:50%;left:50%;width:2em;height:2em;margin-left:-1em;margin-top:-1em;background:url(./img/loader.svg) no-repeat center center;background-size:contain}.online-prestige__head,.online-prestige__footer{display:flex;justify-content:space-between;align-items:center}.online-prestige__timeline{margin:.8em 0}.online-prestige__timeline>.time-line{display:block!important}.online-prestige__title{font-size:1.7em;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}.online-prestige__time{padding-left:2em}.online-prestige__info{display:flex;align-items:center}.online-prestige__info>*{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}.online-prestige__quality{padding-left:1em;white-space:nowrap}.online-prestige .online-prestige-split{font-size:.8em;margin:0 1em;flex-shrink:0}.online-prestige.focus::after{content:"";position:absolute;top:-.6em;left:-.6em;right:-.6em;bottom:-.6em;border-radius:.7em;border:solid .3em #fff;z-index:-1;pointer-events:none}.online-prestige+.online-prestige{margin-top:1.5em}.online-prestige-watched{padding:1em}.online-prestige-watched__icon>svg{width:1.5em;height:1.5em}.online-prestige-watched__body{padding-left:1em;padding-top:.1em;display:flex;flex-wrap:wrap}.online-prestige-watched__body>span+span::before{content:" ● ";vertical-align:top;display:inline-block;margin:0 .5em}.online-prestige-rate{display:inline-flex;align-items:center}.online-prestige-rate>svg{width:1.3em!important;height:1.3em!important}.online-prestige-rate>span{font-weight:600;font-size:1.1em;padding-left:.7em}.online-empty{line-height:1.4}.online-empty__title{font-size:1.8em;margin-bottom:.3em}.online-empty__time{font-size:1.2em;font-weight:300;margin-bottom:1.6em}.online-empty__buttons{display:flex}.online-empty__buttons>*+*{margin-left:1em}.online-empty__button{background:rgba(0,0,0,0.3);font-size:1.2em;padding:.5em 1.2em;border-radius:.2em;margin-bottom:2.4em}.online-empty__button.focus{background:#fff;color:black}.online-empty-template{background-color:rgba(255,255,255,0.3);padding:1em;display:flex;align-items:center;border-radius:.3em}.online-empty-template>*{background:rgba(0,0,0,0.3);border-radius:.3em}.online-empty-template__ico{width:4em;height:4em;margin-right:2.4em}.online-empty-template__body{height:1.7em;width:70%}.online-empty-template+.online-empty-template{margin-top:1em}.uaflix-plugin-sources__actions{display:flex;justify-content:flex-end;margin-bottom:1.2em;position:sticky;top:0;z-index:2;background:linear-gradient(180deg,#262829 0,rgba(38,40,41,0.92) 100%);padding-bottom:.4em}.uaflix-plugin-sources__action{padding:.7em 1.1em;font-size:1em}.uaflix-plugin-sources__title{display:flex;align-items:center;gap:.6em}.uaflix-plugin-sources__name{font-size:1em;line-height:1.2}.uaflix-plugin-sources__status{font-size:.7em;padding:.2em .5em;border-radius:.3em;color:#fff;text-transform:uppercase;line-height:1}.uaflix-plugin-sources__status.is-enabled{background-color:#46b85a}.uaflix-plugin-sources__status.is-disabled{background-color:#d24a4a}</style>');
+    Lampa.Template.add('uaflix_plugin_css', '<style id="uaflix_plugin_style">@charset \'UTF-8\';.online-prestige{position:relative;border-radius:.3em;background-color:rgba(0,0,0,0.3);display:flex;will-change:transform}.online-prestige__body{padding:1.2em;line-height:1.3;flex-grow:1;position:relative}.online-prestige__img{position:relative;width:13em;flex-shrink:0;min-height:8.2em}.online-prestige__img>img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border-radius:.3em;opacity:0;transition:opacity .3s}.online-prestige__img--loaded>img{opacity:1}.online-prestige__folder{padding:1em;flex-shrink:0}.online-prestige__folder>svg{width:4.4em!important;height:4.4em!important}.online-prestige__viewed{position:absolute;top:1em;left:1em;background:rgba(0,0,0,0.45);border-radius:100%;padding:.25em;font-size:.76em}.online-prestige__viewed>svg{width:1.5em!important;height:1.5em!important}.online-prestige__episode-number{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em}.online-prestige__loader{position:absolute;top:50%;left:50%;width:2em;height:2em;margin-left:-1em;margin-top:-1em;background:url(./img/loader.svg) no-repeat center center;background-size:contain}.online-prestige__head,.online-prestige__footer{display:flex;justify-content:space-between;align-items:center}.online-prestige__timeline{margin:.8em 0}.online-prestige__timeline>.time-line{display:block!important}.online-prestige__title{font-size:1.7em;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}.online-prestige__time{padding-left:2em}.online-prestige__info{display:flex;align-items:center}.online-prestige__info>*{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}.online-prestige__quality{padding-left:1em;white-space:nowrap}.online-prestige .online-prestige-split{font-size:.8em;margin:0 1em;flex-shrink:0}.online-prestige.focus::after{content:"";position:absolute;top:-.6em;left:-.6em;right:-.6em;bottom:-.6em;border-radius:.7em;border:solid .3em #fff;z-index:-1;pointer-events:none}.online-prestige+.online-prestige{margin-top:1.5em}.online-prestige-watched{padding:1em}.online-prestige-watched__icon>svg{width:1.5em;height:1.5em}.online-prestige-watched__body{padding-left:1em;padding-top:.1em;display:flex;flex-wrap:wrap}.online-prestige-watched__body>span+span::before{content:" \u25CF ";vertical-align:top;display:inline-block;margin:0 .5em}.online-prestige-rate{display:inline-flex;align-items:center}.online-prestige-rate>svg{width:1.3em!important;height:1.3em!important}.online-prestige-rate>span{font-weight:600;font-size:1.1em;padding-left:.7em}.online-empty{line-height:1.4}.online-empty__title{font-size:1.8em;margin-bottom:.3em}.online-empty__time{font-size:1.2em;font-weight:300;margin-bottom:1.6em}.online-empty__buttons{display:flex}.online-empty__buttons>*+*{margin-left:1em}.online-empty__button{background:rgba(0,0,0,0.3);font-size:1.2em;padding:.5em 1.2em;border-radius:.2em;margin-bottom:2.4em}.online-empty__button.focus{background:#fff;color:black}.online-empty-template{background-color:rgba(255,255,255,0.3);padding:1em;display:flex;align-items:center;border-radius:.3em}.online-empty-template>*{background:rgba(0,0,0,0.3);border-radius:.3em}.online-empty-template__ico{width:4em;height:4em;margin-right:2.4em}.online-empty-template__body{height:1.7em;width:70%}.online-empty-template+.online-empty-template{margin-top:1em}.uaflix-plugin-sources__actions{display:flex;justify-content:flex-end;margin-bottom:1.2em;position:sticky;top:0;z-index:2;background:linear-gradient(180deg,#262829 0,rgba(38,40,41,0.92) 100%);padding-bottom:.4em}.uaflix-plugin-sources__action{padding:.7em 1.1em;font-size:1em}.uaflix-plugin-sources__title{display:flex;align-items:center;gap:.6em}.uaflix-plugin-sources__name{font-size:1em;line-height:1.2}.uaflix-plugin-sources__status{font-size:.7em;padding:.2em .5em;border-radius:.3em;color:#fff;text-transform:uppercase;line-height:1}.uaflix-plugin-sources__status.is-enabled{background-color:#46b85a}.uaflix-plugin-sources__status.is-disabled{background-color:#d24a4a}</style>');
 
     if (!$('#uaflix_plugin_style').length) {
       $('body').append(Lampa.Template.get('uaflix_plugin_css', {}, true));
@@ -1576,12 +1573,12 @@
           page: 1
         });
       });
-      // Insert button as the first (leftmost) button
-      var buttons_area = render.find('.full-start__buttons');
-      if (buttons_area.length) {
-        buttons_area.prepend(btn);
+      // Кнопка крайня зліва — вставляємо перед .view--torrent
+      var torrent_btn = render.find('.view--torrent');
+      if (torrent_btn.length) {
+        torrent_btn.before(btn);
       } else {
-        render.find('.view--torrent').before(btn);
+        render.find('.full-start__button').first().before(btn);
       }
     });
   }
